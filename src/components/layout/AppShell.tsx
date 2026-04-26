@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Menu, Moon, Sun, Trophy, X } from "lucide-react";
+import { Menu, Moon, Sun, X } from "lucide-react";
 import { useStore } from "../../hooks/useStore";
 
 export function AppShell({ children }: { children: JSX.Element }) {
@@ -36,11 +36,15 @@ export function AppShell({ children }: { children: JSX.Element }) {
     <div className="min-h-screen">
       <header className={`sticky top-0 z-20 border-b border-emerald-100/80 bg-white/80 backdrop-blur-xl transition-all dark:border-slate-700 dark:bg-slate-950/75 ${scrolled ? "shadow-md shadow-slate-900/5" : ""}`}>
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <Link to="/" className="flex items-center gap-2 text-xl font-black tracking-tight text-emerald-700">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
-              <Trophy size={16} />
+          <Link to="/" className="flex items-center gap-2">
+            <img
+              src="/spevgo-logo.png"
+              alt="Spevgo"
+              className="h-10 w-auto rounded-md object-contain sm:h-11"
+            />
+            <span className="hidden text-xl font-black tracking-tight text-emerald-700 dark:text-emerald-300 sm:inline">
+              spevgo
             </span>
-            spevgo
           </Link>
           <div className="hidden items-center gap-2 text-sm md:flex">
             <Link to="/" className="rounded-full px-3 py-1.5 transition hover:bg-emerald-50 hover:text-emerald-700 dark:text-slate-200 dark:hover:bg-slate-800">Inicio</Link>

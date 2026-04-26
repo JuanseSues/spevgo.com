@@ -99,7 +99,12 @@ export function HomePage() {
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1518604666860-9ed391f76460?auto=format&fit=crop&w=1800&q=80')] bg-cover bg-center opacity-20" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.18),transparent_35%),radial-gradient(circle_at_80%_40%,rgba(255,255,255,0.12),transparent_30%)]" />
         <div className="relative">
-          <p className="inline-flex rounded-full border border-white/35 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Antioquia · Colombia</p>
+          <img
+            src="/spevgo-logo.png"
+            alt="Spevgo Plataforma Deportiva"
+            className="h-14 w-auto rounded-md object-contain sm:h-16"
+          />
+          <p className="mt-3 inline-flex rounded-full border border-white/35 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Antioquia · Colombia</p>
           <h1 className="text-display mt-4">Tu proxima aventura deportiva te espera</h1>
           <p className="mt-4 max-w-2xl text-sm leading-relaxed text-emerald-50/95 sm:text-base">La forma mas rapida de descubrir torneos, carreras y retos deportivos. Futbol en primer plano, y 11 disciplinas mas.</p>
         </div>

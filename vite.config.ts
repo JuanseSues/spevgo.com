@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['spevgo-logo.png'],
       manifest: {
         name: 'Spevgo',
         short_name: 'Spevgo',
@@ -19,9 +19,9 @@ export default defineConfig({
         lang: 'es-CO',
         icons: [
           {
-            src: '/favicon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
+            src: '/spevgo-logo.png',
+            sizes: '1024x1024',
+            type: 'image/png',
           },
         ],
       },

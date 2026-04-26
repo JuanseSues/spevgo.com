@@ -1,73 +1,131 @@
-# React + TypeScript + Vite
+# Spevgo
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Plataforma web progresiva (PWA) para descubrimiento, gestión y participación en eventos deportivos en Antioquia, Colombia.
 
-Currently, two official plugins are available:
+**Eslogan:** _"Tu próxima aventura deportiva te espera"_
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## Stack tecnológico
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 18 + Vite + TypeScript
+- Tailwind CSS + diseño responsive
+- React Router DOM v6
+- TanStack Query (estado y cache)
+- Framer Motion (animaciones)
+- React Leaflet + OpenStreetMap (mapas)
+- Recharts (dashboard admin)
+- Lucide React (íconos)
+- Sonner (toasts)
+- `vite-plugin-pwa` (manifest + service worker)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Estado del proyecto
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Este proyecto está optimizado para **demo funcional rápida**:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- Funcionalidades completas en frontend
+- Persistencia en `localStorage` (sin backend real aún)
+- Estructura preparada para migrar a Supabase (`src/lib/supabase.ts` + repositorio)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+> Importante: para producción multiusuario se recomienda migrar auth/datos a Supabase con RLS.
+
+---
+
+## Funcionalidades incluidas
+
+- Home pública con filtros, mapa y secciones destacadas
+- Detalle de evento con CTA de registro
+- Registro a eventos gratis y pago simulado
+- Ticket digital por inscripción
+- Crear evento (estado `pending_review`)
+- Mis Eventos (inscripciones + eventos organizados)
+- Panel Admin (KPIs, gráficas, aprobación/rechazo)
+- Favoritos de eventos
+- Perfil de organizador
+- Dark mode opcional
+- PWA instalable
+
+---
+
+## Credenciales demo
+
+### Usuario
+- Email: `user@spevgo.co`
+- Contraseña: `User123*`
+
+### Administrador
+- Email: `admin@spevgo.co`
+- Contraseña: `Admin123*`
+
+---
+
+## Ejecución local
+
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+App local: `http://localhost:5173`
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Build producción:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build
 ```
+
+Preview local de build:
+
+```bash
+npm run preview
+```
+
+---
+
+## Deploy en Render (Static Site)
+
+Proyecto listo para deploy rápido con `render.yaml`.
+
+Configuración recomendada:
+
+- **Tipo:** Static Site
+- **Build Command:** `npm ci && npm run build`
+- **Publish Directory:** `dist`
+- **Branch:** `main`
+
+Si usas rutas SPA, mantener rewrite a `index.html` (ya contemplado).
+
+---
+
+## Variables de entorno
+
+Archivo de referencia:
+
+```bash
+.env.example
+```
+
+Valores opcionales (solo cuando conectes Supabase real):
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+---
+
+## Estructura principal
+
+- `src/features/pages-v2.tsx` → páginas principales y UX
+- `src/components/layout/AppShell.tsx` → layout global y navbar
+- `src/hooks/useStore.ts` → estado global + sesión
+- `src/lib/repository.ts` → capa de acceso a datos
+- `src/lib/supabase.ts` → cliente Supabase (preparado)
+- `src/types/domain.ts` → tipos de dominio
+
+---
+
+## Nota de demo
+
+Esta versión está pensada para demostración funcional.  
+Los datos creados por usuarios se almacenan en el navegador y pueden reiniciarse.

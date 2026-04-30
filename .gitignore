@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Diagramas generados solo para reconstruir el PDF del informe
+docs/_diagrams/

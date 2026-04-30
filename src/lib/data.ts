@@ -17,13 +17,22 @@ export const SPORTS: Sport[] = [
 
 export const CITIES = [
   "Medellin",
+  "Bogota",
+  "Cali",
+  "Barranquilla",
+  "Cartagena",
+  "Bucaramanga",
+  "Pereira",
+  "Manizales",
+  "Santa Marta",
+  "Villavicencio",
+  "Cucuta",
+  "Pasto",
+  "Ibague",
+  "Monteria",
+  "Neiva",
+  "Armenia",
   "Rionegro",
-  "Envigado",
-  "Bello",
-  "Itagui",
-  "Sabaneta",
-  "Guarne",
-  "Santa Fe de Antioquia",
 ];
 
 export const STORAGE_DB_KEY = "spevgo-db-v1";
@@ -53,6 +62,9 @@ const initialEvents: EventItem[] = [
     organizer_name: "Spevgo Admin",
     payment_required: true,
     image_url: "https://images.unsplash.com/photo-1522778526097-ce0a22ceb253?auto=format&fit=crop&w=1200&q=80",
+    football_category: "mayores",
+    team_name: "Leones de Medellin",
+    players: [],
   },
   {
     id: uid(),

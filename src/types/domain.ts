@@ -1,5 +1,6 @@
 export type Role = "visitor" | "user" | "admin";
 export type Difficulty = "beginner" | "intermediate" | "advanced" | "all_levels";
+export type FootballCategory = "6_8" | "9_11" | "12_14" | "15_17" | "mayores" | "sub_35";
 export type EventStatus = "draft" | "pending_review" | "published" | "rejected";
 export type RegStatus = "confirmed" | "pending" | "cancelled";
 export type PaymentStatus = "free" | "paid" | "pending_payment";
@@ -39,6 +40,15 @@ export type EventItem = {
   organizer_name: string;
   review_notes?: string;
   payment_required: boolean;
+  football_category?: FootballCategory;
+  team_name?: string;
+  players?: FootballPlayer[];
+};
+
+export type FootballPlayer = {
+  full_name: string;
+  identity_number: string;
+  birth_date: string;
 };
 
 export type Registration = {

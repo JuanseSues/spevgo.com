@@ -7,7 +7,7 @@ import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import { format, isThisWeek, isToday, parseISO } from "date-fns";
 import { toast } from "sonner";
 import { CITIES, SPORTS, ticket, uid } from "../lib/data";
-import type { Difficulty, EventItem, Registration, Sport, User } from "../types/domain";
+import type { Difficulty, EventItem, FootballCategory, FootballPlayer, Registration, Sport, User } from "../types/domain";
 import { useStore } from "../hooks/useStore";
 import { ChartCard, Empty, SimpleBar, SkeletonGrid } from "../components/common";
 import { repository } from "../lib/repository";
@@ -42,6 +42,93 @@ const sportTagClass: Record<string, string> = {
   crossfit: "bg-red-100 text-red-800",
   "artes marciales": "bg-slate-200 text-slate-800",
   escalada: "bg-fuchsia-100 text-fuchsia-800",
+};
+
+const footballCategories: Array<{ value: FootballCategory; label: string }> = [
+  { value: "6_8", label: "6 a 8 años" },
+  { value: "9_11", label: "9 a 11 años" },
+  { value: "12_14", label: "12 a 14 años" },
+  { value: "15_17", label: "15 a 17 años" },
+  { value: "mayores", label: "Mayores" },
+  { value: "sub_35", label: "Sub 35" },
+];
+
+const cityCoords: Record<string, [number, number]> = {
+  Bogota: [4.711, -74.0721],
+  Medellin: [6.2442, -75.5812],
+  Cali: [3.4516, -76.532],
+  Barranquilla: [10.9685, -74.7813],
+  Cartagena: [10.391, -75.4794],
+  Bucaramanga: [7.1193, -73.1227],
+  Pereira: [4.8143, -75.6946],
+  Manizales: [5.0703, -75.5138],
+  "Santa Marta": [11.2408, -74.199],
+  Villavicencio: [4.142, -73.6266],
+  Cucuta: [7.8891, -72.4967],
+  Pasto: [1.2136, -77.2811],
+  Ibague: [4.4389, -75.2322],
+  Monteria: [8.75, -75.883],
+  Neiva: [2.9273, -75.2819],
+  Armenia: [4.5339, -75.6811],
+  Rionegro: [6.1551, -75.3737],
+};
+
+const defaultColombiaCenter: [number, number] = [4.5709, -74.2973];
+
+const isValidCoordinate = (lat?: number, lng?: number) =>
+  typeof lat === "number" &&
+  typeof lng === "number" &&
+  Number.isFinite(lat) &&
+  Number.isFinite(lng) &&
+  lat >= -90 &&
+  lat <= 90 &&
+  lng >= -180 &&
+  lng <= 180;
+
+const getEventCoords = (event: EventItem): [number, number] | null => {
+  if (isValidCoordinate(event.latitude, event.longitude)) return [event.latitude!, event.longitude!];
+  return cityCoords[event.city] ?? null;
+};
+
+const geocodeInColombia = async (query: string): Promise<[number, number] | null> => {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=co&limit=1`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = (await res.json()) as Array<{ lat: string; lon: string }>;
+  if (!data.length) return null;
+  const lat = Number(data[0].lat);
+  const lng = Number(data[0].lon);
+  return isValidCoordinate(lat, lng) ? [lat, lng] : null;
+};
+
+const getAgeOnDate = (birthDate: string, eventDate: string): number => {
+  const b = new Date(birthDate);
+  const e = new Date(eventDate);
+  if (Number.isNaN(b.getTime()) || Number.isNaN(e.getTime())) return -1;
+  let age = e.getFullYear() - b.getFullYear();
+  const monthDiff = e.getMonth() - b.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && e.getDate() < b.getDate())) age -= 1;
+  return age;
+};
+
+const isAgeValidForCategory = (age: number, category: FootballCategory): boolean => {
+  if (age < 0) return false;
+  switch (category) {
+    case "6_8":
+      return age >= 6 && age <= 8;
+    case "9_11":
+      return age >= 9 && age <= 11;
+    case "12_14":
+      return age >= 12 && age <= 14;
+    case "15_17":
+      return age >= 15 && age <= 17;
+    case "mayores":
+      return age >= 18;
+    case "sub_35":
+      return age >= 18 && age < 35;
+    default:
+      return false;
+  }
 };
 
 function StatCard({ icon, label, value, tone }: { icon: JSX.Element; label: string; value: number; tone: "emerald" | "sky" | "amber" }) {
@@ -104,7 +191,7 @@ export function HomePage() {
             alt="Spevgo Plataforma Deportiva"
             className="h-14 w-auto rounded-md object-contain sm:h-16"
           />
-          <p className="mt-3 inline-flex rounded-full border border-white/35 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Antioquia · Colombia</p>
+          <p className="mt-3 inline-flex rounded-full border border-white/35 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Colombia · Nacional</p>
           <h1 className="text-display mt-4">Tu proxima aventura deportiva te espera</h1>
           <p className="mt-4 max-w-2xl text-sm leading-relaxed text-emerald-50/95 sm:text-base">La forma mas rapida de descubrir torneos, carreras y retos deportivos. Futbol en primer plano, y 11 disciplinas mas.</p>
         </div>
@@ -154,17 +241,21 @@ export function HomePage() {
 
       <motion.section {...fadeUp} className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="surface-card h-[320px] overflow-hidden sm:h-[380px]">
-          <AnyMapContainer center={[6.2518, -75.5636]} zoom={9} className="h-full w-full">
+          <AnyMapContainer center={defaultColombiaCenter} zoom={5} className="h-full w-full">
             <AnyTileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            {events.filter((e) => e.latitude && e.longitude).map((e) => (
-              <AnyMarker key={e.id} position={[e.latitude ?? 6.25, e.longitude ?? -75.56]}>
+            {events.map((e) => {
+              const coords = getEventCoords(e);
+              if (!coords) return null;
+              return (
+              <AnyMarker key={e.id} position={coords}>
                 <AnyPopup>
                   <p className="font-semibold">{e.title}</p>
                   <p>{e.date} - {e.sport}</p>
                   <Link to={`/eventos/${e.id}`} className="text-emerald-700">Ver evento</Link>
                 </AnyPopup>
               </AnyMarker>
-            ))}
+              );
+            })}
           </AnyMapContainer>
         </div>
         <div className="grid gap-2">
@@ -244,7 +335,7 @@ export function EventDetailPage() {
         </div>
         <h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">{event.title}</h1>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{event.sport} · {event.city} · {format(parseISO(event.date), "dd MMM yyyy")} {event.time ?? ""}</p>
-        <p className="mt-4 leading-relaxed text-slate-700 dark:text-slate-300">{event.description || "Evento deportivo en Antioquia."}</p>
+        <p className="mt-4 leading-relaxed text-slate-700 dark:text-slate-300">{event.description || "Evento deportivo en Colombia."}</p>
         <div className="mt-4 h-3 w-full rounded-full bg-slate-200 dark:bg-slate-700">
           <div className="h-3 rounded-full bg-emerald-600" style={{ width: `${progress}%` }} />
         </div>
@@ -257,9 +348,9 @@ export function EventDetailPage() {
         </div>
 
         <div className="mt-4 h-56 overflow-hidden rounded-2xl border border-emerald-100">
-          <AnyMapContainer center={[event.latitude ?? 6.2442, event.longitude ?? -75.5812]} zoom={13} className="h-full w-full">
+          <AnyMapContainer center={getEventCoords(event) ?? defaultColombiaCenter} zoom={getEventCoords(event) ? 13 : 6} className="h-full w-full">
             <AnyTileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            <AnyMarker position={[event.latitude ?? 6.2442, event.longitude ?? -75.5812]}><AnyPopup>{event.title}</AnyPopup></AnyMarker>
+            <AnyMarker position={getEventCoords(event) ?? defaultColombiaCenter}><AnyPopup>{event.title}</AnyPopup></AnyMarker>
           </AnyMapContainer>
         </div>
 
@@ -356,29 +447,110 @@ function PaymentModal({ amount, onClose, onSuccess }: { amount: number; onClose:
 export function CreateEventPage() {
   const { currentUser, updateDb } = useStore();
   const nav = useNavigate();
+  const [selectedSport, setSelectedSport] = useState<Sport>("futbol");
   const [difficulty, setDifficulty] = useState<Difficulty>("all_levels");
+  const [footballCategory, setFootballCategory] = useState<FootballCategory>("mayores");
   const [showCoords, setShowCoords] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [imageUrl, setImageUrl] = useState("");
+  const [uploadedImage, setUploadedImage] = useState<string>("");
+  const [teamName, setTeamName] = useState("");
+  const [players, setPlayers] = useState<FootballPlayer[]>(
+    Array.from({ length: 14 }, () => ({ full_name: "", identity_number: "", birth_date: "" })),
+  );
   if (!currentUser) return <Navigate to="/login" replace />;
+
+  const updatePlayer = (index: number, key: keyof FootballPlayer, value: string) => {
+    setPlayers((prev) => prev.map((p, i) => (i === index ? { ...p, [key]: value } : p)));
+  };
+
+  const addPlayer = () => {
+    if (players.length >= 20) return;
+    setPlayers((prev) => [...prev, { full_name: "", identity_number: "", birth_date: "" }]);
+  };
+
+  const removePlayer = (index: number) => {
+    if (players.length <= 14) return;
+    setPlayers((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const extractImageFromFile = (file?: File) =>
+    new Promise<string>((resolve, reject) => {
+      if (!file) return resolve("");
+      if (!file.type.startsWith("image/")) return reject(new Error("El archivo debe ser una imagen"));
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("No se pudo procesar la imagen"));
+      reader.readAsDataURL(file);
+    });
 
   return (
     <form className="surface-card grid gap-2 p-4" onSubmit={async (e) => {
       e.preventDefault();
       const fd = new FormData(e.currentTarget);
+      const sport = fd.get("sport") as Sport;
+      const city = String(fd.get("city"));
+      const address = String(fd.get("address") || "");
+      const rawLat = Number(fd.get("lat") || NaN);
+      const rawLng = Number(fd.get("lng") || NaN);
+      let latitude = Number.isFinite(rawLat) ? rawLat : undefined;
+      let longitude = Number.isFinite(rawLng) ? rawLng : undefined;
+      if (!isValidCoordinate(latitude, longitude)) {
+        const locationQuery = [address, city, "Colombia"].filter(Boolean).join(", ");
+        const geo = await geocodeInColombia(locationQuery);
+        if (geo) {
+          latitude = geo[0];
+          longitude = geo[1];
+        } else {
+          const cityFallback = cityCoords[city];
+          latitude = cityFallback?.[0];
+          longitude = cityFallback?.[1];
+        }
+      }
+
+      const uploadedFile = fd.get("imageFile");
+      const uploadedImageData = await extractImageFromFile(uploadedFile instanceof File ? uploadedFile : undefined);
+      const finalImage = uploadedImageData || uploadedImage || imageUrl || String(fd.get("image") || "");
+
+      if (sport === "futbol") {
+        const eventDate = String(fd.get("date"));
+        if (!teamName.trim()) return toast.error("Debes ingresar el nombre del equipo");
+        if (players.length < 14 || players.length > 20) return toast.error("El equipo debe tener entre 14 y 20 integrantes");
+        const hasIncompletePlayers = players.some((p) => !p.full_name.trim() || !p.identity_number.trim() || !p.birth_date.trim());
+        if (hasIncompletePlayers) return toast.error("Completa nombre, identidad y fecha de nacimiento de todos los integrantes");
+        const identities = players.map((p) => p.identity_number.trim());
+        if (new Set(identities).size !== identities.length) return toast.error("Los números de identidad del equipo no deben repetirse");
+        const invalidPlayers = players
+          .map((p, idx) => ({
+            index: idx + 1,
+            age: getAgeOnDate(p.birth_date, eventDate),
+            name: p.full_name,
+          }))
+          .filter((x) => !isAgeValidForCategory(x.age, footballCategory));
+        if (invalidPlayers.length > 0) {
+          const sample = invalidPlayers
+            .slice(0, 3)
+            .map((p) => `#${p.index} ${p.name} (${p.age} años)`)
+            .join(", ");
+          return toast.error(`Hay jugadores fuera de categoría (${footballCategories.find((c) => c.value === footballCategory)?.label}). Revisa: ${sample}${invalidPlayers.length > 3 ? "..." : ""}`);
+        }
+      }
+
       await updateDb((d) => {
         d.events.push({
           id: uid(),
           title: String(fd.get("title")),
-          sport: fd.get("sport") as Sport,
-          city: String(fd.get("city")),
+          sport,
+          city,
           date: String(fd.get("date")),
           time: String(fd.get("time") || ""),
-          address: String(fd.get("address") || ""),
+          address,
           description: String(fd.get("description") || ""),
-          image_url: String(fd.get("image") || ""),
+          image_url: finalImage,
           price: Number(fd.get("price") || 0),
           max_participants: Number(fd.get("max") || 0) || undefined,
-          latitude: Number(fd.get("lat") || 0) || undefined,
-          longitude: Number(fd.get("lng") || 0) || undefined,
+          latitude,
+          longitude,
           current_participants: 0,
           difficulty: (fd.get("difficulty") as Difficulty) || "all_levels",
           status: "pending_review",
@@ -386,6 +558,9 @@ export function CreateEventPage() {
           organizer_id: currentUser.id,
           organizer_name: currentUser.name,
           payment_required: Number(fd.get("price") || 0) > 0,
+          football_category: sport === "futbol" ? footballCategory : undefined,
+          team_name: sport === "futbol" ? teamName : undefined,
+          players: sport === "futbol" ? players : undefined,
         });
         return d;
       });
@@ -401,7 +576,12 @@ export function CreateEventPage() {
             <input name="title" placeholder=" " required />
             <label>Titulo del evento</label>
           </div>
-          <select className="input-base" name="sport" required>{SPORTS.map((s) => <option key={s}>{s}</option>)}</select>
+          <select className="input-base" name="sport" required value={selectedSport} onChange={(e) => {
+            setSelectedSport(e.target.value as Sport);
+            if (e.target.value !== "futbol") {
+              setTeamName("");
+            }
+          }}>{SPORTS.map((s) => <option key={s}>{s}</option>)}</select>
           <div className="field-floating">
             <textarea name="description" placeholder=" " rows={4} />
             <label>Descripcion</label>
@@ -409,7 +589,7 @@ export function CreateEventPage() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+      {selectedSport === "futbol" && <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Fecha y lugar</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="field-floating"><input name="city" placeholder=" " required /><label>Ciudad</label></div>
@@ -426,7 +606,7 @@ export function CreateEventPage() {
             <input className="input-base" type="number" step="any" name="lng" placeholder="Longitud" />
           </div>
         )}
-      </section>
+      </section>}
 
       <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Detalles y cupos</p>
@@ -454,11 +634,86 @@ export function CreateEventPage() {
         </div>
         <input type="hidden" name="difficulty" value={difficulty} />
 
-        <div className="mt-4 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/40 p-4 text-center dark:border-emerald-900 dark:bg-emerald-950/20">
+        <div
+          className={`mt-4 rounded-2xl border border-dashed p-4 text-center transition ${dragging ? "border-emerald-500 bg-emerald-100/50 dark:bg-emerald-950/30" : "border-emerald-300 bg-emerald-50/40 dark:border-emerald-900 dark:bg-emerald-950/20"}`}
+          onDragOver={(ev) => {
+            ev.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={async (ev) => {
+            ev.preventDefault();
+            setDragging(false);
+            const file = ev.dataTransfer.files?.[0];
+            if (!file) return;
+            try {
+              const data = await extractImageFromFile(file);
+              setUploadedImage(data);
+            } catch (error) {
+              toast.error((error as Error).message);
+            }
+          }}
+        >
           <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Arrastra una imagen o pega una URL</p>
-          <p className="mt-1 text-xs text-slate-500">Por ahora se guarda URL para mantener el flujo actual.</p>
-          <input className="input-base mt-3" name="image" placeholder="https://..." />
+          <p className="mt-1 text-xs text-slate-500">Soporta archivos de imagen o URL externa.</p>
+          <input className="input-base mt-3" name="image" placeholder="https://..." value={imageUrl} onChange={(ev) => setImageUrl(ev.target.value)} />
+          <input className="input-base mt-2" type="file" name="imageFile" accept="image/*" onChange={async (ev) => {
+            const file = ev.target.files?.[0];
+            if (!file) return;
+            try {
+              const data = await extractImageFromFile(file);
+              setUploadedImage(data);
+            } catch (error) {
+              toast.error((error as Error).message);
+            }
+          }} />
+          {(uploadedImage || imageUrl) && (
+            <img src={uploadedImage || imageUrl} alt="Previsualizacion" className="mx-auto mt-3 h-24 rounded-lg object-cover" />
+          )}
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Modulo futbol (obligatorio para eventos de futbol)</p>
+        <div className="field-floating">
+          <input placeholder=" " value={teamName} onChange={(ev) => setTeamName(ev.target.value)} />
+          <label>Nombre del equipo</label>
+        </div>
+        <p className="mt-3 text-xs font-medium text-slate-500">Categoria</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {footballCategories.map((c) => (
+            <button
+              key={c.value}
+              type="button"
+              className={`rounded-full px-3 py-1.5 text-sm font-medium ${footballCategory === c.value ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}
+              onClick={() => setFootballCategory(c.value)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+
+        <p className="mt-4 text-xs font-medium text-slate-500">Integrantes del equipo ({players.length}/20)</p>
+        <div className="mt-2 grid gap-2">
+          {players.map((player, index) => (
+            <div key={index} className="rounded-xl border border-slate-200 p-2 dark:border-slate-700">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate-500">Jugador {index + 1}</p>
+                <button type="button" className="text-xs text-red-500 disabled:text-slate-400" disabled={players.length <= 14} onClick={() => removePlayer(index)}>
+                  Quitar
+                </button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <input className="input-base" placeholder="Nombre completo" value={player.full_name} onChange={(ev) => updatePlayer(index, "full_name", ev.target.value)} />
+                <input className="input-base" placeholder="# Identidad" value={player.identity_number} onChange={(ev) => updatePlayer(index, "identity_number", ev.target.value)} />
+                <input className="input-base" type="date" placeholder="Fecha nacimiento" value={player.birth_date} onChange={(ev) => updatePlayer(index, "birth_date", ev.target.value)} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <button type="button" className="btn-soft mt-3" disabled={players.length >= 20} onClick={addPlayer}>
+          Agregar integrante
+        </button>
       </section>
 
       <button className="btn-primary w-fit px-5">Enviar para revision</button>
@@ -580,10 +835,44 @@ export function AdminPage() {
 
 function PendingRow({ e, onApprove, onReject }: { e: EventItem; onApprove: () => Promise<void>; onReject: (notes: string) => Promise<void> }) {
   const [n, setN] = useState("");
+  const [expanded, setExpanded] = useState(false);
   return (
     <div className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
-      <p className="font-semibold">{e.title}</p>
-      <p className="text-sm text-slate-600 dark:text-slate-400">{e.city} - {e.sport}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold">{e.title}</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400">{e.city} - {e.sport}</p>
+        </div>
+        <button className="btn-soft !px-2 !py-1 text-xs" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Ocultar detalle" : "Ver detalle completo"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+          <p><strong>Fecha:</strong> {e.date} {e.time ?? ""}</p>
+          <p><strong>Direccion:</strong> {e.address || "No registrada"}</p>
+          <p><strong>Precio:</strong> ${e.price.toLocaleString("es-CO")} COP</p>
+          <p><strong>Cupos:</strong> {e.current_participants}/{e.max_participants ?? "sin limite"}</p>
+          <p><strong>Dificultad:</strong> {e.difficulty}</p>
+          <p><strong>Organizador:</strong> {e.organizer_name}</p>
+          {e.football_category && <p><strong>Categoria futbol:</strong> {footballCategories.find((c) => c.value === e.football_category)?.label ?? e.football_category}</p>}
+          {e.team_name && <p><strong>Equipo:</strong> {e.team_name}</p>}
+          {typeof e.latitude === "number" && typeof e.longitude === "number" && <p><strong>Coordenadas:</strong> {e.latitude.toFixed(5)}, {e.longitude.toFixed(5)}</p>}
+          {e.players && e.players.length > 0 && (
+            <div className="sm:col-span-2">
+              <p className="mb-1"><strong>Integrantes:</strong> {e.players.length}</p>
+              <div className="max-h-36 space-y-1 overflow-auto rounded-xl border border-slate-200 p-2 text-xs dark:border-slate-700">
+                {e.players.map((p, idx) => (
+                  <p key={`${p.identity_number}-${idx}`}>
+                    {idx + 1}. {p.full_name} - ID {p.identity_number} - Nac {p.birth_date}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+          {e.description && <p className="sm:col-span-2"><strong>Descripcion:</strong> {e.description}</p>}
+        </div>
+      )}
       <textarea className="input-base mt-2" placeholder="Notas de revision" value={n} onChange={(ev) => setN(ev.target.value)} />
       <div className="mt-2 flex gap-2">
         <button className="btn-primary px-3 py-1.5" onClick={() => void onApprove()}>Aprobar</button>
@@ -660,7 +949,7 @@ export function OrganizerPage() {
       <section className="surface-card p-5">
         <p className="text-xs uppercase tracking-wide text-emerald-600">Perfil organizador</p>
         <h1 className="mt-1 text-3xl font-black tracking-tight">{organizer.name}</h1>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Especialista en eventos deportivos para Antioquia.</p>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Especialista en eventos deportivos para Colombia.</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl bg-slate-100 p-3 dark:bg-slate-800"><p className="text-xs text-slate-500">Eventos publicados</p><p className="mt-1 flex items-center gap-1 text-xl font-black"><Medal size={16} className="text-emerald-600" />{organizerEvents.filter((e) => e.status === "published").length}</p></div>
           <div className="rounded-xl bg-slate-100 p-3 dark:bg-slate-800"><p className="text-xs text-slate-500">Asistentes acumulados</p><p className="mt-1 flex items-center gap-1 text-xl font-black"><Users size={16} className="text-emerald-600" />{organizerEvents.reduce((acc, e) => acc + e.current_participants, 0)}</p></div>

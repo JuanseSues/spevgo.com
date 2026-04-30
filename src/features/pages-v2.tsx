@@ -6,8 +6,21 @@ import { motion } from "framer-motion";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import { format, isThisWeek, isToday, parseISO } from "date-fns";
 import { toast } from "sonner";
-import { CITIES, SPORTS, ticket, uid } from "../lib/data";
-import type { Difficulty, EventItem, FootballCategory, FootballPlayer, Registration, Sport, User } from "../types/domain";
+import { ADMIN_NOTIFICATION_EMAIL, CITIES, paymentCode, SPORTS, ticket, uid } from "../lib/data";
+import type {
+  Difficulty,
+  EventItem,
+  FootballCategory,
+  FootballMode,
+  FootballPlayer,
+  AppDb,
+  PaymentOrder,
+  PaymentOrderStatus,
+  Registration,
+  Sport,
+  TeamRegistration,
+  User,
+} from "../types/domain";
 import { useStore } from "../hooks/useStore";
 import { ChartCard, Empty, SimpleBar, SkeletonGrid } from "../components/common";
 import { repository } from "../lib/repository";
@@ -52,6 +65,20 @@ const footballCategories: Array<{ value: FootballCategory; label: string }> = [
   { value: "mayores", label: "Mayores" },
   { value: "sub_35", label: "Sub 35" },
 ];
+
+const footballModes: Array<{ value: FootballMode; label: string }> = [
+  { value: "futbol_11", label: "Futbol 11" },
+  { value: "futbol_7", label: "Futbol 7" },
+  { value: "futbol_salon", label: "Futbol de salon" },
+];
+
+const paymentAccount = {
+  bank: "Bancolombia",
+  holder: "Spevgo SAS",
+  account: "Ahorros 28100091234",
+};
+
+const eventPublicationFee = 59000;
 
 const cityCoords: Record<string, [number, number]> = {
   Bogota: [4.711, -74.0721],
@@ -129,6 +156,127 @@ const isAgeValidForCategory = (age: number, category: FootballCategory): boolean
     default:
       return false;
   }
+};
+
+const paymentStatusLabel: Record<PaymentOrderStatus, string> = {
+  pending_payment: "Pendiente de pago",
+  reported: "Reportado por usuario",
+  under_review: "En revision",
+  approved: "Aprobado",
+  rejected: "Rechazado",
+};
+
+const paymentStatusClass: Record<PaymentOrderStatus, string> = {
+  pending_payment: "bg-slate-100 text-slate-700",
+  reported: "bg-amber-100 text-amber-700",
+  under_review: "bg-sky-100 text-sky-700",
+  approved: "bg-emerald-100 text-emerald-700",
+  rejected: "bg-rose-100 text-rose-700",
+};
+
+const parsePlayersFromText = (raw: string): FootballPlayer[] =>
+  raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.includes("|")
+        ? "|"
+        : line.includes("\t")
+          ? "\t"
+          : line.includes(";")
+            ? ";"
+            : ",";
+      const parts = line.split(separator).map((p) => p.trim());
+      return {
+        full_name: parts[0] ?? "",
+        identity_number: parts[1] ?? "",
+        birth_date: parts[2] ?? "",
+      };
+    })
+    .filter((player, index) => {
+      if (index !== 0) return true;
+      const full = player.full_name.toLowerCase();
+      const id = player.identity_number.toLowerCase();
+      const birth = player.birth_date.toLowerCase();
+      const isHeader =
+        (full.includes("nombre") || full.includes("jugador")) &&
+        (id.includes("ident") || id.includes("document")) &&
+        (birth.includes("fecha") || birth.includes("nacimiento") || birth.includes("birth"));
+      return !isHeader;
+    });
+
+const getPlayerLimitsByMode = (mode: FootballMode | undefined) => {
+  if (mode === "futbol_7" || mode === "futbol_salon") return { min: 10, max: 15 };
+  return { min: 14, max: 20 };
+};
+
+const footballModeLabel = (mode?: FootballMode) =>
+  footballModes.find((m) => m.value === mode)?.label ?? "Futbol 11";
+
+const syncFootballTeamsCounter = (db: AppDb, eventId?: string) => {
+  if (!eventId) return;
+  const event = db.events.find((e) => e.id === eventId);
+  if (!event || event.sport !== "futbol") return;
+  event.current_participants = db.team_registrations.filter((r) => r.event_id === eventId && r.status !== "rejected").length;
+};
+
+const createPaymentReportedEmail = ({
+  order,
+  event,
+  teamReg,
+}: {
+  order: PaymentOrder;
+  event?: EventItem;
+  teamReg?: TeamRegistration;
+}) => {
+  const subject = `[Spevgo] Pago reportado ${order.code} - ${order.purpose === "team_registration" ? teamReg?.team_name ?? "Equipo" : event?.title ?? "Evento"}`;
+  const lines = [
+    "Hola equipo admin de Spevgo,",
+    "",
+    "Se ha reportado un nuevo pago y requiere revision.",
+    "",
+    "=== IDENTIFICACION ===",
+    `Codigo: ${order.code}`,
+    `Tipo: ${order.purpose === "team_registration" ? "Inscripcion de equipo" : "Publicacion de evento"}`,
+    `Estado actual: ${paymentStatusLabel[order.status]}`,
+    `Fecha reporte: ${new Date().toLocaleString("es-CO")}`,
+    "",
+    "=== EVENTO ===",
+    `Nombre: ${event?.title ?? "N/A"}`,
+    `Ciudad: ${event?.city ?? "N/A"}`,
+    `Fecha: ${event?.date ?? "N/A"} ${event?.time ?? ""}`,
+    `Organizador: ${event?.organizer_name ?? "N/A"}`,
+    `Modalidad: ${footballModeLabel(event?.football_mode)}`,
+    `Categoria futbol: ${event?.football_category ?? "N/A"}`,
+    "",
+    "=== EQUIPO ===",
+    `Nombre equipo: ${teamReg?.team_name ?? "No aplica"}`,
+    `Capitan: ${teamReg?.captain_name ?? "N/A"}`,
+    `Total jugadores: ${teamReg?.players.length ?? 0}`,
+    "",
+    "=== PAGO REPORTADO ===",
+    `Valor esperado: $${order.amount.toLocaleString("es-CO")} COP`,
+    `Referencia: ${order.evidence?.reference ?? "N/A"}`,
+    `Fecha de pago reportada: ${order.evidence?.paid_at ?? "N/A"}`,
+    `Comprobante: ${order.evidence?.attachment_url ?? "N/A"}`,
+    `Correo de reporte: ${order.evidence?.reported_email ?? "N/A"}`,
+    `Notas usuario: ${order.evidence?.notes ?? "N/A"}`,
+    "",
+    "=== CHECKLIST DE REVISION ===",
+    "- Referencia legible y consistente",
+    "- Valor coincide con la orden",
+    "- Comprobante visible y coherente",
+    "- Evento/equipo coincide con la orden",
+    "- Sin duplicidad de reporte",
+    "",
+    "Por favor revisar en el panel de administracion de Spevgo.",
+  ];
+
+  return {
+    subject,
+    body: lines.join("\n"),
+  };
 };
 
 function StatCard({ icon, label, value, tone }: { icon: JSX.Element; label: string; value: number; tone: "emerald" | "sky" | "amber" }) {
@@ -285,6 +433,7 @@ export function EventDetailPage() {
   const { db, currentUser, updateDb, qc } = useStore();
   const event = db.data?.events.find((e) => e.id === id);
   const [openPay, setOpenPay] = useState(false);
+  const [openTeamRegistration, setOpenTeamRegistration] = useState(false);
   const [accept, setAccept] = useState(false);
 
   const register = useMutation({
@@ -321,7 +470,11 @@ export function EventDetailPage() {
 
   if (!event) return <Empty text="Evento no encontrado." />;
 
-  const progress = Math.min(100, (event.current_participants / (event.max_participants || 100)) * 100);
+  const teamsForEvent = db.data?.team_registrations.filter((r) => r.event_id === event.id && r.status !== "rejected") ?? [];
+  const teamsCount = teamsForEvent.length;
+  const progressBase = event.sport === "futbol" ? (event.max_teams || 1) : (event.max_participants || 100);
+  const progressCurrent = event.sport === "futbol" ? teamsCount : event.current_participants;
+  const progress = Math.min(100, (progressCurrent / progressBase) * 100);
   const organizerEvents = db.data?.events.filter((e) => e.organizer_id === event.organizer_id && e.status === "published").length ?? 0;
 
   return (
@@ -339,7 +492,11 @@ export function EventDetailPage() {
         <div className="mt-4 h-3 w-full rounded-full bg-slate-200 dark:bg-slate-700">
           <div className="h-3 rounded-full bg-emerald-600" style={{ width: `${progress}%` }} />
         </div>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Inscritos {event.current_participants}/{event.max_participants ?? "sin limite"} · Dificultad {event.difficulty}</p>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+          {event.sport === "futbol"
+            ? `Equipos inscritos ${teamsCount}/${event.max_teams ?? "sin limite"} · Modalidad ${footballModeLabel(event.football_mode)}`
+            : `Inscritos ${event.current_participants}/${event.max_participants ?? "sin limite"} · Dificultad ${event.difficulty}`}
+        </p>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl bg-slate-100 p-3 dark:bg-slate-800"><p className="text-xs text-slate-500">Precio</p><p className="text-xl font-black text-emerald-700">${event.price.toLocaleString("es-CO")}</p></div>
@@ -371,16 +528,25 @@ export function EventDetailPage() {
             onClick={() => {
               if (!currentUser) return window.location.assign("/login");
               if (!accept) return toast.error("Debes aceptar terminos y condiciones");
+              if (event.sport === "futbol") return setOpenTeamRegistration(true);
               if (event.price > 0) setOpenPay(true);
               else register.mutate({ paid: false });
             }}
           >
-            Registrarme ahora
+            {event.sport === "futbol" ? "Inscribir equipo" : "Registrarme ahora"}
           </button>
         </div>
       </div>
 
       {openPay && <PaymentModal amount={event.price} onClose={() => setOpenPay(false)} onSuccess={(method) => { register.mutate({ paid: true, method }); setOpenPay(false); toast.success("Pago exitoso y tiquete generado"); }} />}
+      {openTeamRegistration && currentUser && (
+        <TeamRegistrationModal
+          event={event}
+          user={currentUser}
+          onClose={() => setOpenTeamRegistration(false)}
+          updateDb={updateDb}
+        />
+      )}
     </div>
   );
 }
@@ -444,35 +610,119 @@ function PaymentModal({ amount, onClose, onSuccess }: { amount: number; onClose:
   );
 }
 
+function TeamRegistrationModal({
+  event,
+  user,
+  onClose,
+  updateDb,
+}: {
+  event: EventItem;
+  user: User;
+  onClose: () => void;
+  updateDb: (updater: (d: AppDb) => AppDb) => Promise<void>;
+}) {
+  const [teamName, setTeamName] = useState("");
+  const [playersRaw, setPlayersRaw] = useState("");
+  const limits = getPlayerLimitsByMode(event.football_mode);
+  return (
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/45 p-4 backdrop-blur-[2px]">
+      <div className="surface-card w-full max-w-2xl p-5 shadow-xl">
+        <p className="text-lg font-bold">Inscripcion de equipo</p>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+          {footballModeLabel(event.football_mode)} · Min {limits.min} / Max {limits.max} jugadores.
+          <br />
+          Formatos soportados por linea: `Nombre | Identidad | AAAA-MM-DD` o `Nombre,Identidad,AAAA-MM-DD`
+          (tambien `;` o tabulado al pegar desde Excel).
+        </p>
+        <input className="input-base mt-3" placeholder="Nombre del equipo" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
+        <textarea
+          className="input-base mt-2 min-h-44"
+          placeholder={"Ejemplo:\nJuan Perez|10101010|2001-04-02\nCarlos Ruiz,20202020,2000-11-18"}
+          value={playersRaw}
+          onChange={(e) => setPlayersRaw(e.target.value)}
+        />
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          <p>Banco: <strong>{paymentAccount.bank}</strong></p>
+          <p>Titular: <strong>{paymentAccount.holder}</strong></p>
+          <p>Cuenta: <strong>{paymentAccount.account}</strong></p>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="btn-soft" onClick={onClose}>Cancelar</button>
+          <button
+            className="btn-primary"
+            onClick={async () => {
+              const players = parsePlayersFromText(playersRaw);
+              const eventTeams = ((await repository.loadDb()).team_registrations ?? []).filter((r) => r.event_id === event.id && r.status !== "rejected").length;
+              if (event.max_teams && eventTeams >= event.max_teams) return toast.error("Este evento ya completo sus cupos de equipos");
+              if (!teamName.trim()) return toast.error("Ingresa nombre del equipo");
+              if (players.length < limits.min || players.length > limits.max) {
+                return toast.error(`El equipo debe tener entre ${limits.min} y ${limits.max} jugadores`);
+              }
+              const invalid = players.some((p) => !p.full_name || !p.identity_number || !p.birth_date);
+              if (invalid) return toast.error("Todos los jugadores deben tener nombre, identidad y fecha");
+              const identities = players.map((p) => p.identity_number.trim());
+              if (new Set(identities).size !== identities.length) return toast.error("No se permiten identidades repetidas");
+              const outCategory = players.some((p) => !event.football_category || !isAgeValidForCategory(getAgeOnDate(p.birth_date, event.date), event.football_category));
+              if (outCategory) return toast.error("Hay jugadores fuera de la categoria del evento");
+
+              const regId = uid();
+              const orderId = uid();
+              await updateDb((d) => {
+                d.team_registrations.push({
+                  id: regId,
+                  event_id: event.id,
+                  event_title: event.title,
+                  captain_user_id: user.id,
+                  captain_name: user.name,
+                  team_name: teamName.trim(),
+                  football_category: event.football_category ?? "mayores",
+                  players,
+                  status: "pending_payment",
+                  payment_order_id: orderId,
+                  created_at: new Date().toISOString(),
+                });
+                d.payment_orders.push({
+                  id: orderId,
+                  code: paymentCode(),
+                  purpose: "team_registration",
+                  status: "pending_payment",
+                  amount: event.price,
+                  created_by: user.id,
+                  event_id: event.id,
+                  team_registration_id: regId,
+                  instructions_account: paymentAccount.account,
+                  instructions_holder: paymentAccount.holder,
+                  instructions_bank: paymentAccount.bank,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+                syncFootballTeamsCounter(d, event.id);
+                return d;
+              });
+              toast.success("Equipo inscrito. Reporta el pago en Mis eventos > Inscripciones.");
+              onClose();
+            }}
+          >
+            Generar orden de pago
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CreateEventPage() {
   const { currentUser, updateDb } = useStore();
   const nav = useNavigate();
   const [selectedSport, setSelectedSport] = useState<Sport>("futbol");
   const [difficulty, setDifficulty] = useState<Difficulty>("all_levels");
+  const [footballMode, setFootballMode] = useState<FootballMode>("futbol_11");
   const [footballCategory, setFootballCategory] = useState<FootballCategory>("mayores");
   const [showCoords, setShowCoords] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
   const [uploadedImage, setUploadedImage] = useState<string>("");
-  const [teamName, setTeamName] = useState("");
-  const [players, setPlayers] = useState<FootballPlayer[]>(
-    Array.from({ length: 14 }, () => ({ full_name: "", identity_number: "", birth_date: "" })),
-  );
   if (!currentUser) return <Navigate to="/login" replace />;
-
-  const updatePlayer = (index: number, key: keyof FootballPlayer, value: string) => {
-    setPlayers((prev) => prev.map((p, i) => (i === index ? { ...p, [key]: value } : p)));
-  };
-
-  const addPlayer = () => {
-    if (players.length >= 20) return;
-    setPlayers((prev) => [...prev, { full_name: "", identity_number: "", birth_date: "" }]);
-  };
-
-  const removePlayer = (index: number) => {
-    if (players.length <= 14) return;
-    setPlayers((prev) => prev.filter((_, i) => i !== index));
-  };
 
   const extractImageFromFile = (file?: File) =>
     new Promise<string>((resolve, reject) => {
@@ -513,32 +763,15 @@ export function CreateEventPage() {
       const finalImage = uploadedImageData || uploadedImage || imageUrl || String(fd.get("image") || "");
 
       if (sport === "futbol") {
-        const eventDate = String(fd.get("date"));
-        if (!teamName.trim()) return toast.error("Debes ingresar el nombre del equipo");
-        if (players.length < 14 || players.length > 20) return toast.error("El equipo debe tener entre 14 y 20 integrantes");
-        const hasIncompletePlayers = players.some((p) => !p.full_name.trim() || !p.identity_number.trim() || !p.birth_date.trim());
-        if (hasIncompletePlayers) return toast.error("Completa nombre, identidad y fecha de nacimiento de todos los integrantes");
-        const identities = players.map((p) => p.identity_number.trim());
-        if (new Set(identities).size !== identities.length) return toast.error("Los números de identidad del equipo no deben repetirse");
-        const invalidPlayers = players
-          .map((p, idx) => ({
-            index: idx + 1,
-            age: getAgeOnDate(p.birth_date, eventDate),
-            name: p.full_name,
-          }))
-          .filter((x) => !isAgeValidForCategory(x.age, footballCategory));
-        if (invalidPlayers.length > 0) {
-          const sample = invalidPlayers
-            .slice(0, 3)
-            .map((p) => `#${p.index} ${p.name} (${p.age} años)`)
-            .join(", ");
-          return toast.error(`Hay jugadores fuera de categoría (${footballCategories.find((c) => c.value === footballCategory)?.label}). Revisa: ${sample}${invalidPlayers.length > 3 ? "..." : ""}`);
-        }
+        const maxTeams = Number(fd.get("maxTeams") || 0);
+        if (!maxTeams || maxTeams < 2) return toast.error("Define cupos por equipos (minimo 2)");
       }
 
       await updateDb((d) => {
+        const eventId = uid();
+        const orderId = uid();
         d.events.push({
-          id: uid(),
+          id: eventId,
           title: String(fd.get("title")),
           sport,
           city,
@@ -553,21 +786,38 @@ export function CreateEventPage() {
           longitude,
           current_participants: 0,
           difficulty: (fd.get("difficulty") as Difficulty) || "all_levels",
-          status: "pending_review",
+          status: "draft",
           is_featured: false,
           organizer_id: currentUser.id,
           organizer_name: currentUser.name,
           payment_required: Number(fd.get("price") || 0) > 0,
+          football_mode: sport === "futbol" ? footballMode : undefined,
           football_category: sport === "futbol" ? footballCategory : undefined,
-          team_name: sport === "futbol" ? teamName : undefined,
-          players: sport === "futbol" ? players : undefined,
+          max_teams: sport === "futbol" ? Number(fd.get("maxTeams") || 0) || undefined : undefined,
+        });
+        d.payment_orders.push({
+          id: orderId,
+          code: paymentCode(),
+          purpose: "event_publication",
+          status: "pending_payment",
+          amount: eventPublicationFee,
+          created_by: currentUser.id,
+          event_id: eventId,
+          instructions_account: paymentAccount.account,
+          instructions_holder: paymentAccount.holder,
+          instructions_bank: paymentAccount.bank,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
         return d;
       });
-      toast.success("Evento enviado para revision");
+      toast.success("Evento creado. Debes reportar el pago de publicacion para enviarlo a revision.");
       nav("/mis-eventos");
     }}>
       <h2 className="section-title !mb-1">Crear evento</h2>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        Publicar evento tiene tarifa de <strong>${eventPublicationFee.toLocaleString("es-CO")} COP</strong>. Al finalizar, se generara un codigo de pago para transferencia y reporte de soporte.
+      </div>
 
       <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Info basica</p>
@@ -578,9 +828,6 @@ export function CreateEventPage() {
           </div>
           <select className="input-base" name="sport" required value={selectedSport} onChange={(e) => {
             setSelectedSport(e.target.value as Sport);
-            if (e.target.value !== "futbol") {
-              setTeamName("");
-            }
           }}>{SPORTS.map((s) => <option key={s}>{s}</option>)}</select>
           <div className="field-floating">
             <textarea name="description" placeholder=" " rows={4} />
@@ -589,7 +836,7 @@ export function CreateEventPage() {
         </div>
       </section>
 
-      {selectedSport === "futbol" && <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+      <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Fecha y lugar</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="field-floating"><input name="city" placeholder=" " required /><label>Ciudad</label></div>
@@ -606,13 +853,13 @@ export function CreateEventPage() {
             <input className="input-base" type="number" step="any" name="lng" placeholder="Longitud" />
           </div>
         )}
-      </section>}
+      </section>
 
       <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Detalles y cupos</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="field-floating"><input name="price" type="number" placeholder=" " /><label>Precio COP</label></div>
-          <div className="field-floating"><input name="max" type="number" placeholder=" " /><label>Maximo participantes</label></div>
+          {selectedSport !== "futbol" && <div className="field-floating"><input name="max" type="number" placeholder=" " /><label>Maximo participantes</label></div>}
         </div>
         <p className="mt-4 text-xs font-medium text-slate-500">Nivel</p>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -673,12 +920,24 @@ export function CreateEventPage() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Modulo futbol (obligatorio para eventos de futbol)</p>
-        <div className="field-floating">
-          <input placeholder=" " value={teamName} onChange={(ev) => setTeamName(ev.target.value)} />
-          <label>Nombre del equipo</label>
+      {selectedSport === "futbol" && <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Configuracion del torneo de futbol</p>
+        <p className="text-xs text-slate-500">Los equipos se inscriben despues, cuando el evento este publicado por admin.</p>
+
+        <p className="mt-3 text-xs font-medium text-slate-500">Modalidad</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {footballModes.map((m) => (
+            <button
+              key={m.value}
+              type="button"
+              className={`rounded-full px-3 py-1.5 text-sm font-medium ${footballMode === m.value ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}
+              onClick={() => setFootballMode(m.value)}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
+
         <p className="mt-3 text-xs font-medium text-slate-500">Categoria</p>
         <div className="mt-2 flex flex-wrap gap-2">
           {footballCategories.map((c) => (
@@ -693,28 +952,11 @@ export function CreateEventPage() {
           ))}
         </div>
 
-        <p className="mt-4 text-xs font-medium text-slate-500">Integrantes del equipo ({players.length}/20)</p>
-        <div className="mt-2 grid gap-2">
-          {players.map((player, index) => (
-            <div key={index} className="rounded-xl border border-slate-200 p-2 dark:border-slate-700">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-500">Jugador {index + 1}</p>
-                <button type="button" className="text-xs text-red-500 disabled:text-slate-400" disabled={players.length <= 14} onClick={() => removePlayer(index)}>
-                  Quitar
-                </button>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <input className="input-base" placeholder="Nombre completo" value={player.full_name} onChange={(ev) => updatePlayer(index, "full_name", ev.target.value)} />
-                <input className="input-base" placeholder="# Identidad" value={player.identity_number} onChange={(ev) => updatePlayer(index, "identity_number", ev.target.value)} />
-                <input className="input-base" type="date" placeholder="Fecha nacimiento" value={player.birth_date} onChange={(ev) => updatePlayer(index, "birth_date", ev.target.value)} />
-              </div>
-            </div>
-          ))}
+        <div className="field-floating mt-3">
+          <input name="maxTeams" type="number" min={2} placeholder=" " required />
+          <label>Cupos maximos de equipos</label>
         </div>
-        <button type="button" className="btn-soft mt-3" disabled={players.length >= 20} onClick={addPlayer}>
-          Agregar integrante
-        </button>
-      </section>
+      </section>}
 
       <button className="btn-primary w-fit px-5">Enviar para revision</button>
     </form>
@@ -724,10 +966,13 @@ export function CreateEventPage() {
 export function MyEventsPage() {
   const { db, currentUser, updateDb } = useStore();
   const [tab, setTab] = useState<"inscripciones" | "organizo">("inscripciones");
+  const [reportingOrderId, setReportingOrderId] = useState<string | null>(null);
   if (!db.data || !currentUser) return <Navigate to="/login" replace />;
 
   const regs = db.data.registrations.filter((r) => r.user_id === currentUser.id);
   const own = db.data.events.filter((e) => e.organizer_id === currentUser.id);
+  const teamRegs = db.data.team_registrations.filter((r) => r.captain_user_id === currentUser.id);
+  const paymentOrders = db.data.payment_orders.filter((o) => o.created_by === currentUser.id);
 
   const downloadTicket = (r: Registration) => {
     const lines = [
@@ -777,12 +1022,134 @@ export function MyEventsPage() {
               }}>Cancelar</button>}
             </div>
           ))}
+          {teamRegs.map((reg) => {
+            const order = paymentOrders.find((o) => o.id === reg.payment_order_id);
+            if (!order) return null;
+            return (
+              <div key={reg.id} className="surface-card p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-bold">{reg.team_name}</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">{reg.event_title} · {reg.players.length} jugadores</p>
+                  </div>
+                  <span className={`rounded-full px-2 py-1 text-xs font-semibold ${paymentStatusClass[order.status]}`}>{paymentStatusLabel[order.status]}</span>
+                </div>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Codigo de pago: <strong>{order.code}</strong> · Valor: ${order.amount.toLocaleString("es-CO")} COP</p>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Transferir a {order.instructions_bank} - {order.instructions_account} ({order.instructions_holder})</p>
+                {order.admin_notes && <p className="mt-2 text-sm text-rose-600">Motivo: {order.admin_notes}</p>}
+                {(order.status === "pending_payment" || order.status === "rejected") && (
+                  <button className="btn-soft mt-3" onClick={() => setReportingOrderId(order.id)}>Reportar pago</button>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="grid gap-3">
-          {own.length === 0 ? <Empty text="No organizas eventos aun." /> : own.map((e) => <div key={e.id} className="surface-card p-4"><p className="font-bold">{e.title}</p><p className="text-sm text-slate-600 dark:text-slate-400">Estado: {e.status}</p>{e.review_notes && <p className="text-sm text-red-700">Notas: {e.review_notes}</p>}</div>)}
+          {own.length === 0 ? <Empty text="No organizas eventos aun." /> : own.map((e) => {
+            const order = paymentOrders.find((o) => o.event_id === e.id && o.purpose === "event_publication");
+            return <div key={e.id} className="surface-card p-4">
+              <p className="font-bold">{e.title}</p>
+              <p className="text-sm text-slate-600 dark:text-slate-400">Estado del evento: {e.status}</p>
+              {order && (
+                <>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Pago publicacion: <span className={`rounded-full px-2 py-1 text-xs font-semibold ${paymentStatusClass[order.status]}`}>{paymentStatusLabel[order.status]}</span></p>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Codigo: <strong>{order.code}</strong> · ${order.amount.toLocaleString("es-CO")} COP</p>
+                  {order.admin_notes && <p className="mt-1 text-sm text-rose-600">Motivo: {order.admin_notes}</p>}
+                  {(order.status === "pending_payment" || order.status === "rejected") && (
+                    <button className="btn-soft mt-2" onClick={() => setReportingOrderId(order.id)}>Reportar pago</button>
+                  )}
+                </>
+              )}
+              {e.review_notes && <p className="mt-1 text-sm text-red-700">Notas revision: {e.review_notes}</p>}
+            </div>;
+          })}
         </div>
       )}
+      {reportingOrderId && db.data.payment_orders.find((o) => o.id === reportingOrderId) && (
+        <PaymentReportModal
+          order={db.data.payment_orders.find((o) => o.id === reportingOrderId)!}
+          onClose={() => setReportingOrderId(null)}
+          onSubmit={async (payload) => {
+            const currentOrder = db.data!.payment_orders.find((o) => o.id === reportingOrderId);
+            const currentEvent = currentOrder?.event_id ? db.data!.events.find((e) => e.id === currentOrder.event_id) : undefined;
+            const currentTeamReg = currentOrder?.team_registration_id
+              ? db.data!.team_registrations.find((r) => r.id === currentOrder.team_registration_id)
+              : undefined;
+            await updateDb((d) => {
+              const order = d.payment_orders.find((o) => o.id === reportingOrderId);
+              if (!order) return d;
+              order.status = "reported";
+              order.evidence = payload;
+              order.updated_at = new Date().toISOString();
+              if (order.purpose === "team_registration" && order.team_registration_id) {
+                const reg = d.team_registrations.find((r) => r.id === order.team_registration_id);
+                if (reg) reg.status = "payment_reported";
+              }
+              return d;
+            });
+            if (currentOrder) {
+              const updatedOrder = { ...currentOrder, status: "reported" as PaymentOrderStatus, evidence: payload };
+              const email = createPaymentReportedEmail({
+                order: updatedOrder,
+                event: currentEvent,
+                teamReg: currentTeamReg,
+              });
+              const mailtoUrl = `mailto:${encodeURIComponent(ADMIN_NOTIFICATION_EMAIL)}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`;
+              window.open(mailtoUrl, "_blank");
+            }
+            toast.success("Pago reportado. Se preparo el correo para notificacion al admin.");
+            setReportingOrderId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PaymentReportModal({
+  order,
+  onClose,
+  onSubmit,
+}: {
+  order: PaymentOrder;
+  onClose: () => void;
+  onSubmit: (payload: { reference: string; paid_at?: string; notes?: string; attachment_url?: string; reported_email?: string }) => Promise<void>;
+}) {
+  const [reference, setReference] = useState("");
+  const [paidAt, setPaidAt] = useState("");
+  const [notes, setNotes] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [reportedEmail, setReportedEmail] = useState("");
+  return (
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/45 p-4 backdrop-blur-[2px]">
+      <div className="surface-card w-full max-w-lg p-5 shadow-xl">
+        <p className="text-lg font-bold">Reportar pago</p>
+        <p className="text-sm text-slate-600 dark:text-slate-300">Orden {order.code} · ${order.amount.toLocaleString("es-CO")} COP</p>
+        <input className="input-base mt-3" placeholder="Referencia de transferencia" value={reference} onChange={(e) => setReference(e.target.value)} />
+        <input className="input-base mt-2" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+        <input className="input-base mt-2" placeholder="URL del comprobante (Drive/imagen)" value={attachmentUrl} onChange={(e) => setAttachmentUrl(e.target.value)} />
+        <input className="input-base mt-2" type="email" placeholder="Correo para acuse admin" value={reportedEmail} onChange={(e) => setReportedEmail(e.target.value)} />
+        <textarea className="input-base mt-2" placeholder="Notas opcionales" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="btn-soft" onClick={onClose}>Cancelar</button>
+          <button
+            className="btn-primary"
+            onClick={async () => {
+              if (!reference.trim()) return toast.error("Debes ingresar referencia");
+              await onSubmit({
+                reference: reference.trim(),
+                paid_at: paidAt || undefined,
+                notes: notes || undefined,
+                attachment_url: attachmentUrl || undefined,
+                reported_email: reportedEmail || undefined,
+              });
+            }}
+          >
+            Enviar reporte
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -797,13 +1164,15 @@ export function AdminPage() {
   const gmv = db.data.registrations.filter((r) => r.payment_status === "paid").reduce((a, b) => a + b.amount_paid, 0);
   const bySport = Object.entries(db.data.registrations.reduce((acc: Record<string, number>, r) => { acc[r.event_sport] = (acc[r.event_sport] || 0) + 1; return acc; }, {})).map(([name, total]) => ({ name, total })).slice(0, 5);
   const byCity = Object.entries(db.data.events.reduce((acc: Record<string, number>, e) => { acc[e.city] = (acc[e.city] || 0) + 1; return acc; }, {})).map(([name, total]) => ({ name, total })).slice(0, 5);
+  const paymentPendingReview = db.data.payment_orders.filter((o) => o.status === "reported" || o.status === "under_review");
 
   return (
     <div className="space-y-6">
       <h1 className="section-title !mb-0 !text-3xl">Panel Admin</h1>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
         {[
           ["Pendientes", pending.length],
+          ["Pagos por revisar", paymentPendingReview.length],
           ["Publicados", published],
           ["Rechazados", rejected],
           ["Registros", db.data.registrations.length],
@@ -815,6 +1184,57 @@ export function AdminPage() {
         <ChartCard title="Top 5 deportes"><SimpleBar data={bySport} /></ChartCard>
         <ChartCard title="Top 5 ciudades"><SimpleBar data={byCity} /></ChartCard>
       </div>
+
+      <section className="surface-card p-4">
+        <p className="mb-2 font-bold">Revision de pagos reportados</p>
+        <div className="space-y-3">
+          {paymentPendingReview.length === 0 ? <Empty text="No hay pagos reportados por revisar." /> : paymentPendingReview.map((order) => (
+            <PaymentReviewRow
+              key={order.id}
+              order={order}
+              event={order.event_id ? db.data.events.find((e) => e.id === order.event_id) : undefined}
+              teamReg={order.team_registration_id ? db.data.team_registrations.find((r) => r.id === order.team_registration_id) : undefined}
+              onApprove={async () => updateDb((d) => {
+                const target = d.payment_orders.find((o) => o.id === order.id);
+                if (!target) return d;
+                target.status = "approved";
+                target.admin_notes = undefined;
+                target.updated_at = new Date().toISOString();
+                if (target.purpose === "event_publication" && target.event_id) {
+                  const ev = d.events.find((e) => e.id === target.event_id);
+                  if (ev) ev.status = "pending_review";
+                }
+                if (target.purpose === "team_registration" && target.team_registration_id) {
+                  const reg = d.team_registrations.find((r) => r.id === target.team_registration_id);
+                  if (reg) reg.status = "confirmed";
+                  syncFootballTeamsCounter(d, target.event_id);
+                }
+                return d;
+              })}
+              onReject={async (notes) => updateDb((d) => {
+                const target = d.payment_orders.find((o) => o.id === order.id);
+                if (!target) return d;
+                target.status = "rejected";
+                target.admin_notes = notes;
+                target.updated_at = new Date().toISOString();
+                if (target.purpose === "event_publication" && target.event_id) {
+                  const ev = d.events.find((e) => e.id === target.event_id);
+                  if (ev) ev.status = "draft";
+                }
+                if (target.purpose === "team_registration" && target.team_registration_id) {
+                  const reg = d.team_registrations.find((r) => r.id === target.team_registration_id);
+                  if (reg) {
+                    reg.status = "rejected";
+                    reg.review_notes = notes;
+                  }
+                  syncFootballTeamsCounter(d, target.event_id);
+                }
+                return d;
+              })}
+            />
+          ))}
+        </div>
+      </section>
 
       <section className="surface-card p-4">
         <p className="mb-2 font-bold">Revision de eventos pendientes</p>
@@ -829,6 +1249,47 @@ export function AdminPage() {
           <li>2000+ usuarios</li><li>150+ eventos publicados</li><li>8000+ inscripciones</li><li>8+ ciudades activas</li><li>GMV mes 12: $30.000.000 COP</li><li>NPS {">"} 50</li>
         </ul>
       </section>
+    </div>
+  );
+}
+
+function PaymentReviewRow({
+  order,
+  event,
+  teamReg,
+  onApprove,
+  onReject,
+}: {
+  order: PaymentOrder;
+  event?: EventItem;
+  teamReg?: TeamRegistration;
+  onApprove: () => Promise<void>;
+  onReject: (notes: string) => Promise<void>;
+}) {
+  const [notes, setNotes] = useState("");
+  return (
+    <div className="rounded-2xl border border-slate-200 p-3 dark:border-slate-700">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold">{order.purpose === "event_publication" ? "Pago publicacion de evento" : "Pago inscripcion de equipo"}</p>
+        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${paymentStatusClass[order.status]}`}>{paymentStatusLabel[order.status]}</span>
+      </div>
+      <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Codigo: <strong>{order.code}</strong> · Valor: ${order.amount.toLocaleString("es-CO")} COP</p>
+      {event && <p className="text-sm text-slate-600 dark:text-slate-300">Evento: {event.title} ({event.city})</p>}
+      {teamReg && <p className="text-sm text-slate-600 dark:text-slate-300">Equipo: {teamReg.team_name} · Jugadores: {teamReg.players.length}</p>}
+      {order.evidence && (
+        <div className="mt-2 rounded-xl bg-slate-50 p-2 text-sm dark:bg-slate-800">
+          <p>Referencia: <strong>{order.evidence.reference}</strong></p>
+          {order.evidence.paid_at && <p>Fecha de pago: {order.evidence.paid_at}</p>}
+          {order.evidence.attachment_url && <p>Soporte: <a className="text-emerald-700 underline" href={order.evidence.attachment_url} target="_blank" rel="noreferrer">Ver archivo</a></p>}
+          {order.evidence.reported_email && <p>Correo de reporte: {order.evidence.reported_email}</p>}
+          {order.evidence.notes && <p>Notas usuario: {order.evidence.notes}</p>}
+        </div>
+      )}
+      <textarea className="input-base mt-2" placeholder="Motivo si rechazas" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <div className="mt-2 flex gap-2">
+        <button className="btn-primary px-3 py-1.5" onClick={() => void onApprove()}>Validar pago</button>
+        <button className="rounded-xl bg-red-600 px-3 py-1.5 text-white" onClick={() => void onReject(notes || "El comprobante no coincide con la orden.")}>Rechazar</button>
+      </div>
     </div>
   );
 }
@@ -852,24 +1313,12 @@ function PendingRow({ e, onApprove, onReject }: { e: EventItem; onApprove: () =>
           <p><strong>Fecha:</strong> {e.date} {e.time ?? ""}</p>
           <p><strong>Direccion:</strong> {e.address || "No registrada"}</p>
           <p><strong>Precio:</strong> ${e.price.toLocaleString("es-CO")} COP</p>
-          <p><strong>Cupos:</strong> {e.current_participants}/{e.max_participants ?? "sin limite"}</p>
+          <p><strong>Cupos:</strong> {e.sport === "futbol" ? `${e.max_teams ?? "sin limite"} equipos` : `${e.current_participants}/${e.max_participants ?? "sin limite"} participantes`}</p>
           <p><strong>Dificultad:</strong> {e.difficulty}</p>
           <p><strong>Organizador:</strong> {e.organizer_name}</p>
+          {e.football_mode && <p><strong>Modalidad futbol:</strong> {footballModeLabel(e.football_mode)}</p>}
           {e.football_category && <p><strong>Categoria futbol:</strong> {footballCategories.find((c) => c.value === e.football_category)?.label ?? e.football_category}</p>}
-          {e.team_name && <p><strong>Equipo:</strong> {e.team_name}</p>}
           {typeof e.latitude === "number" && typeof e.longitude === "number" && <p><strong>Coordenadas:</strong> {e.latitude.toFixed(5)}, {e.longitude.toFixed(5)}</p>}
-          {e.players && e.players.length > 0 && (
-            <div className="sm:col-span-2">
-              <p className="mb-1"><strong>Integrantes:</strong> {e.players.length}</p>
-              <div className="max-h-36 space-y-1 overflow-auto rounded-xl border border-slate-200 p-2 text-xs dark:border-slate-700">
-                {e.players.map((p, idx) => (
-                  <p key={`${p.identity_number}-${idx}`}>
-                    {idx + 1}. {p.full_name} - ID {p.identity_number} - Nac {p.birth_date}
-                  </p>
-                ))}
-              </div>
-            </div>
-          )}
           {e.description && <p className="sm:col-span-2"><strong>Descripcion:</strong> {e.description}</p>}
         </div>
       )}
@@ -968,7 +1417,8 @@ export function OrganizerPage() {
 }
 
 function EventCard({ e, isFavorite = false, onToggleFavorite }: { e: EventItem; isFavorite?: boolean; onToggleFavorite?: () => void }) {
-  const progress = Math.round((e.current_participants / (e.max_participants || 100)) * 100);
+  const progressBase = e.sport === "futbol" ? (e.max_teams || 1) : (e.max_participants || 100);
+  const progress = Math.round((e.current_participants / progressBase) * 100);
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.28 }} whileHover={{ y: -5 }} className="surface-card overflow-hidden transition-shadow hover:shadow-lg">
       <div className="relative">
@@ -993,7 +1443,11 @@ function EventCard({ e, isFavorite = false, onToggleFavorite }: { e: EventItem; 
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${sportTagClass[e.sport] ?? "bg-emerald-100 text-emerald-800"}`}>{e.sport}</span>
           <span className="text-xs text-slate-500">{progress}% cupos</span>
         </p>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{e.current_participants}/{e.max_participants ?? "∞"} inscritos · ${e.price.toLocaleString("es-CO")} COP</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          {e.sport === "futbol"
+            ? `${e.current_participants}/${e.max_teams ?? "∞"} equipos · ${footballModeLabel(e.football_mode)}`
+            : `${e.current_participants}/${e.max_participants ?? "∞"} inscritos`} · ${e.price.toLocaleString("es-CO")} COP
+        </p>
         <Link className="btn-ghost mt-2 inline-block px-3 py-1.5" to={`/eventos/${e.id}`}>Ver detalle</Link>
       </div>
     </motion.div>

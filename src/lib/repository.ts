@@ -13,7 +13,12 @@ export type AppRepository = {
 const localRepository: AppRepository = {
   async loadDb() {
     const raw = localStorage.getItem(STORAGE_DB_KEY);
-    if (raw) return JSON.parse(raw) as AppDb;
+    if (raw) {
+      const parsed = JSON.parse(raw) as AppDb;
+      parsed.team_registrations = parsed.team_registrations ?? [];
+      parsed.payment_orders = parsed.payment_orders ?? [];
+      return parsed;
+    }
     const seed = createSeedDb();
     localStorage.setItem(STORAGE_DB_KEY, JSON.stringify(seed));
     return seed;

@@ -37,9 +37,11 @@ export const CITIES = [
 
 export const STORAGE_DB_KEY = "spevgo-db-v1";
 export const STORAGE_SESSION_KEY = "spevgo-session-v1";
+export const ADMIN_NOTIFICATION_EMAIL = "admin@spevgo.co";
 
 export const uid = () => crypto.randomUUID();
 export const ticket = () => `EVS-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+export const paymentCode = () => `SPV-PAY-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
 const initialEvents: EventItem[] = [
   {
@@ -50,7 +52,7 @@ const initialEvents: EventItem[] = [
     city: "Medellin",
     date: "2026-05-18",
     time: "09:00",
-    current_participants: 42,
+    current_participants: 6,
     max_participants: 64,
     price: 35000,
     is_featured: true,
@@ -62,9 +64,9 @@ const initialEvents: EventItem[] = [
     organizer_name: "Spevgo Admin",
     payment_required: true,
     image_url: "https://images.unsplash.com/photo-1522778526097-ce0a22ceb253?auto=format&fit=crop&w=1200&q=80",
+    football_mode: "futbol_11",
     football_category: "mayores",
-    team_name: "Leones de Medellin",
-    players: [],
+    max_teams: 16,
   },
   {
     id: uid(),
@@ -117,4 +119,6 @@ export const createSeedDb = (): AppDb => ({
   events: initialEvents,
   registrations: [],
   users: initialUsers,
+  team_registrations: [],
+  payment_orders: [],
 });

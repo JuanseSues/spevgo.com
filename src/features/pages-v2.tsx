@@ -118,14 +118,18 @@ const getEventCoords = (event: EventItem): [number, number] | null => {
 };
 
 const geocodeInColombia = async (query: string): Promise<[number, number] | null> => {
-  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=co&limit=1`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = (await res.json()) as Array<{ lat: string; lon: string }>;
-  if (!data.length) return null;
-  const lat = Number(data[0].lat);
-  const lng = Number(data[0].lon);
-  return isValidCoordinate(lat, lng) ? [lat, lng] : null;
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=co&limit=1`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = (await res.json()) as Array<{ lat: string; lon: string }>;
+    if (!data.length) return null;
+    const lat = Number(data[0].lat);
+    const lng = Number(data[0].lon);
+    return isValidCoordinate(lat, lng) ? [lat, lng] : null;
+  } catch {
+    return null;
+  }
 };
 
 const getAgeOnDate = (birthDate: string, eventDate: string): number => {
@@ -811,7 +815,7 @@ export function CreateEventPage() {
         });
         return d;
       });
-      toast.success("Evento creado. Debes reportar el pago de publicacion para enviarlo a revision.");
+      toast.success("Evento creado en borrador. Reporta el pago de publicacion en Mis eventos para enviarlo a revision.");
       nav("/mis-eventos");
     }}>
       <h2 className="section-title !mb-1">Crear evento</h2>
@@ -953,7 +957,7 @@ export function CreateEventPage() {
         </div>
 
         <div className="field-floating mt-3">
-          <input name="maxTeams" type="number" min={2} placeholder=" " required />
+          <input name="maxTeams" type="number" min={2} defaultValue={8} placeholder=" " />
           <label>Cupos maximos de equipos</label>
         </div>
       </section>}
